@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 app = FastAPI(title="LogiFlow WMS")
@@ -46,3 +46,12 @@ products = [
 @app.get("/products", response_model=list[Product])
 def list_products():
 	return products
+
+@app.post("/products", response_model=Product, status_code=201)
+def create_product(product: Product):
+	if any(item["sku"] == product.sku for item in products):
+		raise HTTPException(status_code=409, detail="SKU already exists")
+
+	product_data = product.model_dump()
+	products.append(product_data)
+	return product_data

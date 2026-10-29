@@ -28,6 +28,14 @@ class Product(BaseModel):
 def list_products():
 	return get_products()
 
+@app.get("/products/low-stock", response_model=list[Product])
+def list_low_stock_products():
+    return [
+        product
+        for product in get_products()
+        if product["quantity_on_hand"] <= product["reorder_point"]
+    ]
+
 @app.post("/products", response_model=Product, status_code=201)
 def create_product(product: Product):
     product_data = product.model_dump()

@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from pydantic import BaseModel, Field
 
 app = FastAPI(title="LogiFlow WMS")
 
@@ -6,6 +7,14 @@ app = FastAPI(title="LogiFlow WMS")
 @app.get("/health")
 def health_check():
 	return {"status": "ok"}
+
+class Product(BaseModel):
+	sku: str
+	name: str
+	category: str
+	unit: str
+	quantity_on_hand: int = Field(ge=0)
+	reorder_point: int = Field(ge=0)
 
 products = [
 	{
@@ -34,6 +43,6 @@ products = [
 	},
 ]
 
-@app.get("/products")
+@app.get("/products", response_model=list[Product])
 def list_products():
 	return products

@@ -1,7 +1,11 @@
 import sqlite3
+import os
 from pathlib import Path
 
-DATABASE_PATH = Path(__file__).resolve().parent.parent / "logiflow.db"
+LOCAL_DATABASE_PATH = Path(__file__).resolve().parent.parent / "logiflow.db"
+DATABASE_PATH = Path(
+	os.environ.get("DATABASE_PATH", str(LOCAL_DATABASE_PATH))
+)
 
 seed_products = [
 	("BRG-001", "Industrial bearing", "Components", "piece", 120, 30),

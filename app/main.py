@@ -2,8 +2,8 @@ import sqlite3
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from contextlib import asynccontextmanager
-from app.database import add_product, get_products, initialize_database
 from app.database import add_product, get_box_types, get_products, initialize_database
+from app.packing import build_packing_plan
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -41,6 +41,13 @@ class BoxType(BaseModel):
 	empty_weight_kg: float = Field(gt=0)
 	max_payload_kg: float = Field(gt=0)
 
+class PackingItem(BaseModel):
+	sku: str
+	quantity: int = Field(gt=0)
+
+class PackingRequest(BaseModel):
+	items: list[PackingItem] = Field(min_length=1)
+
 @app.get("/products", response_model=list[Product])
 def list_products():
 	return get_products()
@@ -65,3 +72,50 @@ def create_product(product: Product):
 	except sqlite3.IntegrityError:
 		raise HTTPException(status_code=409, detail="SKU already exists")
 	return product_data
+
+@app.post("/packing/plan")
+def create_packing_plan(request: PackingRequest):
+	products_by_sku = {
+		product["sku"]: product
+		for product in get_products()
+	}
+
+	requested_quantities = {}
+	for item in request.items:
+		requested_quantities[item.sku] = (
+			requested_quantities.get(item.sku, 0) + item.quantity
+		)
+
+	packing_products = []
+	for sku, quantity in requested_quantities.items():
+		product = products_by_sku.get(sku)
+
+		if product is None:
+			raise HTTPException(
+				status_code=404,
+				detail=f"Product '{sku}' not found",
+			)
+
+		if quantity > product["quantity_on_hand"]:
+			raise HTTPException(
+				status_code=409,
+				detail=f"Insufficient stock for '{sku}'",
+			)
+
+		required_fields = (
+			"length_cm",
+			"width_cm",
+			"height_cm",
+			"weight_kg",
+		)
+		if any(product[field] is None for field in required_fields):
+			raise HTTPException(
+				status_code=422,
+				detail=f"Package dimensions are missing for '{sku}'",
+			)
+
+		packing_products.extend([product] * quantity)
+
+	box_types = get_box_types()
+	return build_packing_plan(packing_products, box_types)
+

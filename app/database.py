@@ -60,6 +60,17 @@ seed_products = [
 	("MOTOR-XL", "Large industrial motor", "Components", "piece", 1, 1, 55, 45, 40, 18.00),
 ]
 
+seed_box_types = [
+	("BOX-3.7L", 3.7, 20, 15, 12.33, 21, 16, 13.33, 0.10, 5),
+	("BOX-5L", 5, 25, 20, 10, 26, 21, 11, 0.15, 5),
+	("BOX-7L", 7, 28, 25, 10, 29, 26, 11, 0.20, 5),
+	("BOX-10L", 10, 40, 25, 10, 41, 26, 11, 0.25, 5),
+	("BOX-14L", 14, 35, 20, 20, 36, 21, 21, 0.35, 5),
+	("BOX-34L", 34, 50, 34, 20, 51, 35, 21, 0.65, 15),
+	("BOX-50L", 50, 50, 40, 25, 51, 41, 26, 0.85, 15),
+	("BOX-70L", 70, 50, 40, 35, 51, 41, 36, 1.10, 15),
+]
+
 def initialize_database():
 	connection = sqlite3.connect(DATABASE_PATH)
 	try:
@@ -90,6 +101,22 @@ def initialize_database():
 				connection.execute(
 					f"ALTER TABLE products ADD COLUMN {column_name} {column_type}"
 				)
+		connection.execute(
+			"""
+			CREATE TABLE IF NOT EXISTS box_types (
+				code TEXT PRIMARY KEY,
+				capacity_liters REAL NOT NULL CHECK (capacity_liters > 0),
+				inner_length_cm REAL NOT NULL CHECK (inner_length_cm > 0),
+				inner_width_cm REAL NOT NULL CHECK (inner_width_cm > 0),
+				inner_height_cm REAL NOT NULL CHECK (inner_height_cm > 0),
+				outer_length_cm REAL NOT NULL CHECK (outer_length_cm > 0),
+				outer_width_cm REAL NOT NULL CHECK (outer_width_cm > 0),
+				outer_height_cm REAL NOT NULL CHECK (outer_height_cm > 0),
+				empty_weight_kg REAL NOT NULL CHECK (empty_weight_kg > 0),
+				max_payload_kg REAL NOT NULL CHECK (max_payload_kg > 0)
+			)
+			"""
+		)
 		connection.executemany(
 			"""
 			INSERT OR IGNORE INTO products
@@ -106,6 +133,27 @@ def initialize_database():
 				weight_kg = excluded.weight_kg
 			""",
 			seed_products,
+		)
+		connection.executemany(
+			"""
+			INSERT INTO box_types
+				(code, capacity_liters,
+				 inner_length_cm, inner_width_cm, inner_height_cm,
+				 outer_length_cm, outer_width_cm, outer_height_cm,
+				 empty_weight_kg, max_payload_kg)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(code) DO UPDATE SET
+				capacity_liters = excluded.capacity_liters,
+				inner_length_cm = excluded.inner_length_cm,
+				inner_width_cm = excluded.inner_width_cm,
+				inner_height_cm = excluded.inner_height_cm,
+				outer_length_cm = excluded.outer_length_cm,
+				outer_width_cm = excluded.outer_width_cm,
+				outer_height_cm = excluded.outer_height_cm,
+				empty_weight_kg = excluded.empty_weight_kg,
+				max_payload_kg = excluded.max_payload_kg
+			""",
+			seed_box_types,
 		)	
 		connection.commit()
 	finally:
@@ -120,6 +168,24 @@ def get_products():
 			SELECT sku, name, category, unit, quantity_on_hand, reorder_point, length_cm, width_cm, height_cm, weight_kg
 			FROM products
 			ORDER BY sku
+			"""
+		).fetchall()
+		return [dict(row) for row in rows]
+	finally:
+		connection.close()
+
+def get_box_types():
+	connection = sqlite3.connect(DATABASE_PATH)
+	connection.row_factory = sqlite3.Row
+	try:
+		rows = connection.execute(
+			"""
+			SELECT code, capacity_liters,
+			       inner_length_cm, inner_width_cm, inner_height_cm,
+			       outer_length_cm, outer_width_cm, outer_height_cm,
+			       empty_weight_kg, max_payload_kg
+			FROM box_types
+			ORDER BY capacity_liters
 			"""
 		).fetchall()
 		return [dict(row) for row in rows]

@@ -28,6 +28,21 @@ def initialize_database():
 			)
 			"""
 		)
+		existing_columns = {
+			row[1] for row in connection.execute("PRAGMA table_info(products)")
+		}
+		new_columns = {
+			"length_cm": "REAL",
+			"width_cm": "REAL",
+			"height_cm": "REAL",
+			"weight_kg": "REAL",
+		}
+
+		for column_name, column_type in new_columns.items():
+			if column_name not in existing_columns:
+				connection.execute(
+					f"ALTER TABLE products ADD COLUMN {column_name} {column_type}"
+				)
 		connection.executemany(
 			"""
 			INSERT OR IGNORE INTO products
@@ -46,7 +61,7 @@ def get_products():
 	try:
 		rows = connection.execute(
 			"""
-			SELECT sku, name, category, unit, quantity_on_hand, reorder_point
+			SELECT sku, name, category, unit, quantity_on_hand, reorder_point, length_cm, width_cm, height_cm, weight_kg
 			FROM products
 			ORDER BY sku
 			"""
@@ -61,8 +76,8 @@ def add_product(product_data):
 		connection.execute(
 			"""
 			INSERT INTO products
-				(sku, name, category, unit, quantity_on_hand, reorder_point)
-			VALUES (?, ?, ?, ?, ?, ?)
+				(sku, name, category, unit, quantity_on_hand, reorder_point, length_cm, width_cm, height_cm, weight_kg)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			""",
 			(
 				product_data["sku"],
@@ -71,6 +86,10 @@ def add_product(product_data):
 				product_data["unit"],
 				product_data["quantity_on_hand"],
 				product_data["reorder_point"],
+				product_data["length_cm"],
+				product_data["width_cm"],
+				product_data["height_cm"],
+				product_data["weight_kg"],
 			),
 		)
 		connection.commit()

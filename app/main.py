@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 from contextlib import asynccontextmanager
 from app.database import add_product, get_box_types, get_products, initialize_database
 from app.packing import build_packing_plan
+from app.palletizing import build_pallet_plan
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -48,6 +49,14 @@ class PackingItem(BaseModel):
 class PackingRequest(BaseModel):
 	items: list[PackingItem] = Field(min_length=1)
 
+class PalletBoxRequest(BaseModel):
+	box_code: str
+	gross_weight_kg: float = Field(gt=0)
+	placements: list[dict]
+
+class PalletizationRequest(BaseModel):
+	boxes: list[PalletBoxRequest] = Field(min_length=1)
+
 @app.get("/products", response_model=list[Product])
 def list_products():
 	return get_products()
@@ -73,8 +82,7 @@ def create_product(product: Product):
 		raise HTTPException(status_code=409, detail="SKU already exists")
 	return product_data
 
-@app.post("/packing/plan")
-def create_packing_plan(request: PackingRequest):
+def prepare_packing_products(request: PackingRequest):
 	products_by_sku = {
 		product["sku"]: product
 		for product in get_products()
@@ -116,6 +124,39 @@ def create_packing_plan(request: PackingRequest):
 
 		packing_products.extend([product] * quantity)
 
+	return packing_products
+
+@app.post("/packing/plan")
+def create_packing_plan(request: PackingRequest):
+	packing_products = prepare_packing_products(request)
 	box_types = get_box_types()
 	return build_packing_plan(packing_products, box_types)
 
+@app.post("/pallets/plan")
+def create_palletization_plan(request: PalletizationRequest):
+	box_types = get_box_types()
+	known_codes = {box_type["code"] for box_type in box_types}
+
+	packed_boxes = []
+	for box in request.boxes:
+		if box.box_code not in known_codes:
+			raise HTTPException(
+				status_code=404,
+				detail=f"Box type '{box.box_code}' not found",
+			)
+		packed_boxes.append(box.model_dump())
+
+	return build_pallet_plan(packed_boxes, box_types)
+
+@app.post("/outbound/plan")
+def create_outbound_plan(request: PackingRequest):
+	packing_products = prepare_packing_products(request)
+	box_types = get_box_types()
+
+	packing_plan = build_packing_plan(packing_products, box_types)
+	pallet_plan = build_pallet_plan(packing_plan["boxes"], box_types)
+
+	return {
+		"packing": packing_plan,
+		"palletization": pallet_plan,
+	}

@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from app.database import add_product, get_box_types, get_products, initialize_database
 from app.packing import build_packing_plan
 from app.palletizing import build_pallet_plan
+from app.trucking import build_truck_plan
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -155,8 +156,9 @@ def create_outbound_plan(request: PackingRequest):
 
 	packing_plan = build_packing_plan(packing_products, box_types)
 	pallet_plan = build_pallet_plan(packing_plan["boxes"], box_types)
-
+	truck_plan = build_truck_plan(pallet_plan["pallets"])
 	return {
 		"packing": packing_plan,
 		"palletization": pallet_plan,
+		"trucking": truck_plan,
 	}

@@ -117,6 +117,13 @@ def initialize_database():
 			)
 			"""
 		)
+		connection.execute(
+			"""
+			CREATE TABLE IF NOT EXISTS storage_locations (
+				location_code TEXT PRIMARY KEY
+			)
+			"""
+		)
 		connection.executemany(
 			"""
 			INSERT OR IGNORE INTO products
@@ -218,3 +225,31 @@ def add_product(product_data):
 	finally:
 		connection.close()
 
+def get_locations():
+    connection = sqlite3.connect(DATABASE_PATH)
+    try:
+        rows = connection.execute(
+            """
+            SELECT location_code
+            FROM storage_locations
+            ORDER BY location_code
+            """
+        ).fetchall()
+        return [{"location_code": row[0]} for row in rows]
+    finally:
+        connection.close()
+
+
+def add_location(location_code):
+    connection = sqlite3.connect(DATABASE_PATH)
+    try:
+        connection.execute(
+            """
+            INSERT INTO storage_locations (location_code)
+            VALUES (?)
+            """,
+            (location_code,),
+        )
+        connection.commit()
+    finally:
+        connection.close()

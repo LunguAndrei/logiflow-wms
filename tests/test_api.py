@@ -1,5 +1,7 @@
 import app.main as main
+import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 
 def test_outbound_rejects_zero_quantity(monkeypatch):
@@ -48,3 +50,45 @@ def test_outbound_plan_returns_all_three_stages(monkeypatch):
         "palletization": pallet_result,
         "trucking": truck_result,
     }
+
+@pytest.mark.parametrize(
+    "location_code",
+    [
+        "A-21-01-01",
+        "A-03-07-01",
+        "A-03-02-11",
+    ],
+)
+def test_storage_location_rejects_numbers_over_limits(location_code):
+    with pytest.raises(ValidationError):
+        main.StorageLocation(location_code=location_code)
+
+def test_create_location_returns_201(monkeypatch):
+    monkeypatch.setattr(main, "initialize_database", lambda: None)
+    monkeypatch.setattr(main, "add_location", lambda location_code: None)
+
+    with TestClient(main.app) as client:
+        response = client.post(
+            "/locations",
+            json={"location_code": "B-01-01-01"},
+        )
+
+    assert response.status_code == 201
+    assert response.json() == {"location_code": "B-01-01-01"}
+
+
+def test_duplicate_location_returns_409(monkeypatch):
+    def raise_duplicate_error(location_code):
+        raise main.sqlite3.IntegrityError("duplicate location")
+
+    monkeypatch.setattr(main, "initialize_database", lambda: None)
+    monkeypatch.setattr(main, "add_location", raise_duplicate_error)
+
+    with TestClient(main.app) as client:
+        response = client.post(
+            "/locations",
+            json={"location_code": "B-01-01-01"},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Location already exists"

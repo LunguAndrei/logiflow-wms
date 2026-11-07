@@ -22,12 +22,23 @@ def test_outbound_plan_returns_all_three_stages(monkeypatch):
 	packing_result = {"boxes": [{"box_code": "BOX-TEST"}]}
 	pallet_result = {"pallets": [{"pallet_number": 1}]}
 	truck_result = {"trucks": [{"truck_number": 1}]}
+	pick_result = [
+	{
+		"sku": "TEST-001",
+		"location_code": "A-01-01-01",
+		"quantity": 1,
+	}
+	]
 
 	monkeypatch.setattr(main, "initialize_database", lambda: None)
 	monkeypatch.setattr(
 		main, "prepare_packing_products", lambda request: products
 	)
 	monkeypatch.setattr(main, "get_box_types", lambda: box_types)
+	monkeypatch.setattr(main, "get_inventory_balances", lambda: [])
+	monkeypatch.setattr(
+	main, "build_pick_plan", lambda requested_items, balances: pick_result,
+	)
 	monkeypatch.setattr(
 		main, "build_packing_plan", lambda products, boxes: packing_result
 	)
@@ -49,6 +60,7 @@ def test_outbound_plan_returns_all_three_stages(monkeypatch):
 		"packing": packing_result,
 		"palletization": pallet_result,
 		"trucking": truck_result,
+		"picking": pick_result,
 	}
 
 @pytest.mark.parametrize(

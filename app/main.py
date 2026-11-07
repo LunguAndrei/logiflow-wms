@@ -6,6 +6,7 @@ from app.database import receive_inventory, pick_inventory, add_location, add_pr
 from app.packing import build_packing_plan
 from app.palletizing import build_pallet_plan
 from app.trucking import build_truck_plan
+from app.picking import build_pick_plan
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -244,6 +245,14 @@ def create_palletization_plan(request: PalletizationRequest):
 @app.post("/outbound/plan")
 def create_outbound_plan(request: PackingRequest):
 	packing_products = prepare_packing_products(request)
+	try:
+		pick_plan = build_pick_plan(
+			[(item.sku, item.quantity) for item in request.items],
+			get_inventory_balances(),
+		)
+	except ValueError as error:
+		raise HTTPException(status_code=409, detail=str(error))
+
 	box_types = get_box_types()
 
 	packing_plan = build_packing_plan(packing_products, box_types)
@@ -253,4 +262,5 @@ def create_outbound_plan(request: PackingRequest):
 		"packing": packing_plan,
 		"palletization": pallet_plan,
 		"trucking": truck_plan,
+		"picking": pick_plan
 	}

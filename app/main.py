@@ -2,7 +2,7 @@ import sqlite3
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from contextlib import asynccontextmanager
-from app.database import pick_inventory, add_location, add_product, get_box_types, get_inventory_balances, get_locations, get_products, initialize_database
+from app.database import receive_inventory, pick_inventory, add_location, add_product, get_box_types, get_inventory_balances, get_locations, get_products, initialize_database
 from app.packing import build_packing_plan
 from app.palletizing import build_pallet_plan
 from app.trucking import build_truck_plan
@@ -87,6 +87,11 @@ class InventoryPickRequest(BaseModel):
 	location_code: str
 	quantity: int = Field(gt=0)
 
+class InventoryReceiveRequest(BaseModel):
+	sku: str
+	location_code: str
+	quantity: int = Field(gt=0)
+
 @app.get("/products", response_model=list[Product])
 def list_products():
 	return get_products()
@@ -130,6 +135,27 @@ def pick_inventory_item(request: InventoryPickRequest):
 		"location_code": request.location_code,
 		"quantity_picked": request.quantity,
 		"status": "picked",
+	}
+
+@app.post("/inventory/receive")
+def receive_inventory_item(request: InventoryReceiveRequest):
+	try:
+		receive_inventory(
+			request.sku,
+			request.location_code,
+			request.quantity,
+		)
+	except sqlite3.IntegrityError:
+		raise HTTPException(
+			status_code=404,
+			detail="Product or location not found",
+		)
+
+	return {
+		"sku": request.sku,
+		"location_code": request.location_code,
+		"quantity_received": request.quantity,
+		"status": "received",
 	}
 
 @app.post("/locations", response_model=StorageLocation, status_code=201)

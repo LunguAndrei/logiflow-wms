@@ -142,3 +142,50 @@ def test_inventory_pick_returns_409_when_stock_is_insufficient(monkeypatch):
 	assert response.json()["detail"] == (
 		"No matching balance or insufficient stock at this location"
 	)
+
+def test_inventory_receive_returns_success(monkeypatch):
+	monkeypatch.setattr(main, "initialize_database", lambda: None)
+	monkeypatch.setattr(
+		main,
+		"receive_inventory",
+		lambda sku, location_code, quantity: True,
+	)
+
+	with TestClient(main.app) as client:
+		response = client.post(
+			"/inventory/receive",
+			json={
+				"sku": "ADH-001",
+				"location_code": "A-01-01-01",
+				"quantity": 2,
+			},
+		)
+
+	assert response.status_code == 200
+	assert response.json() == {
+		"sku": "ADH-001",
+		"location_code": "A-01-01-01",
+		"quantity_received": 2,
+		"status": "received",
+	}
+
+
+def test_inventory_receive_returns_404_when_reference_is_missing(monkeypatch):
+	def raise_integrity_error(sku, location_code, quantity):
+		raise main.sqlite3.IntegrityError("foreign key constraint failed")
+
+	monkeypatch.setattr(main, "initialize_database", lambda: None)
+	monkeypatch.setattr(main, "receive_inventory", raise_integrity_error)
+
+	with TestClient(main.app) as client:
+		response = client.post(
+			"/inventory/receive",
+			json={
+				"sku": "MISSING",
+				"location_code": "A-01-01-01",
+				"quantity": 2,
+			},
+		)
+
+	assert response.status_code == 404
+	assert response.json()["detail"] == "Product or location not found"

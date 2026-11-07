@@ -201,3 +201,54 @@ def test_inventory_receive_returns_404_when_reference_is_missing(monkeypatch):
 
 	assert response.status_code == 404
 	assert response.json()["detail"] == "Product or location not found"
+
+def test_outbound_pick_confirmation_returns_success(monkeypatch):
+	monkeypatch.setattr(main, "initialize_database", lambda: None)
+	monkeypatch.setattr(main, "confirm_inventory_picks", lambda picks: True)
+
+	with TestClient(main.app) as client:
+		response = client.post(
+			"/outbound/pick/confirm",
+			json={
+				"picks": [
+					{
+						"sku": "ADH-001",
+						"location_code": "A-01-01-01",
+						"quantity": 2,
+					},
+					{
+						"sku": "ANCHOR-01",
+						"location_code": "A-01-01-02",
+						"quantity": 1,
+					},
+				],
+			},
+		)
+
+	assert response.status_code == 200
+	assert response.json()["status"] == "confirmed"
+	assert len(response.json()["picks"]) == 2
+
+
+def test_outbound_pick_confirmation_returns_409_when_stock_changed(monkeypatch):
+	monkeypatch.setattr(main, "initialize_database", lambda: None)
+	monkeypatch.setattr(main, "confirm_inventory_picks", lambda picks: False)
+
+	with TestClient(main.app) as client:
+		response = client.post(
+			"/outbound/pick/confirm",
+			json={
+				"picks": [
+					{
+						"sku": "ADH-001",
+						"location_code": "A-01-01-01",
+						"quantity": 2,
+					},
+				],
+			},
+		)
+
+	assert response.status_code == 409
+	assert response.json()["detail"] == (
+		"Stock changed or insufficient at one of the requested locations"
+	)

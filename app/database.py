@@ -359,6 +359,33 @@ def pick_inventory(sku, location_code, quantity):
 	finally:
 		connection.close()
 
+def receive_inventory(sku, location_code, quantity):
+	connection = connect_database()
+	try:
+		connection.execute(
+			"""
+			INSERT INTO inventory_balances (sku, location_code, quantity)
+			VALUES (?, ?, ?)
+			ON CONFLICT(sku, location_code) DO UPDATE SET
+				quantity = quantity + excluded.quantity
+			""",
+			(sku, location_code, quantity),
+		)
+
+		connection.execute(
+			"""
+			UPDATE products
+			SET quantity_on_hand = quantity_on_hand + ?
+			WHERE sku = ?
+			""",
+			(quantity, sku),
+		)
+
+		connection.commit()
+		return True
+	finally:
+		connection.close()
+
 def add_location(location_code):
 	connection = connect_database()
 	try:

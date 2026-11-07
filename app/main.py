@@ -2,7 +2,7 @@ import sqlite3
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from contextlib import asynccontextmanager
-from app.database import add_location, add_product, get_box_types, get_locations, get_products, initialize_database
+from app.database import pick_inventory, add_location, add_product, get_box_types, get_inventory_balances, get_locations, get_products, initialize_database
 from app.packing import build_packing_plan
 from app.palletizing import build_pallet_plan
 from app.trucking import build_truck_plan
@@ -59,28 +59,33 @@ class PalletizationRequest(BaseModel):
 	boxes: list[PalletBoxRequest] = Field(min_length=1)
 
 class StorageLocation(BaseModel):
-    location_code: str = Field(
-        pattern=r"^[A-Z]-(?:0[1-9]|[1-9][0-9])-(?:0[1-9]|[1-9][0-9])-(?:0[1-9]|[1-9][0-9])$"
-    )
+	location_code: str = Field(
+		pattern=r"^[A-Z]-(?:0[1-9]|[1-9][0-9])-(?:0[1-9]|[1-9][0-9])-(?:0[1-9]|[1-9][0-9])$"
+	)
 
-class StorageLocation(BaseModel):
-    location_code: str = Field(
-        pattern=r"^[A-Z]-(?:0[1-9]|[1-9][0-9])-(?:0[1-9]|[1-9][0-9])-(?:0[1-9]|[1-9][0-9])$"
-    )
+	@field_validator("location_code")
+	@classmethod
+	def check_location_limits(cls, value: str) -> str:
+		_, rack, level, position = value.split("-")
 
-    @field_validator("location_code")
-    @classmethod
-    def check_location_limits(cls, value: str) -> str:
-        _, rack, level, position = value.split("-")
+		if int(rack) > 20:
+			raise ValueError("Rack number must be between 01 and 20")
+		if int(level) > 6:
+			raise ValueError("Level number must be between 01 and 06")
+		if int(position) > 10:
+			raise ValueError("Position number must be between 01 and 10")
 
-        if int(rack) > 20:
-            raise ValueError("Rack number must be between 01 and 20")
-        if int(level) > 6:
-            raise ValueError("Level number must be between 01 and 06")
-        if int(position) > 10:
-            raise ValueError("Position number must be between 01 and 10")
+		return value
 
-        return value
+class InventoryBalance(BaseModel):
+	sku: str
+	location_code: str
+	quantity: int = Field(ge=0)
+
+class InventoryPickRequest(BaseModel):
+	sku: str
+	location_code: str
+	quantity: int = Field(gt=0)
 
 @app.get("/products", response_model=list[Product])
 def list_products():
@@ -100,16 +105,40 @@ def list_box_types():
 
 @app.get("/locations", response_model=list[StorageLocation])
 def list_locations():
-    return get_locations()
+	return get_locations()
 
+@app.get("/inventory/by-location", response_model=list[InventoryBalance])
+def list_inventory_by_location():
+	return get_inventory_balances()
+
+@app.post("/inventory/pick")
+def pick_inventory_item(request: InventoryPickRequest):
+	picked = pick_inventory(
+		request.sku,
+		request.location_code,
+		request.quantity,
+	)
+
+	if not picked:
+		raise HTTPException(
+			status_code=409,
+			detail="No matching balance or insufficient stock at this location",
+		)
+
+	return {
+		"sku": request.sku,
+		"location_code": request.location_code,
+		"quantity_picked": request.quantity,
+		"status": "picked",
+	}
 
 @app.post("/locations", response_model=StorageLocation, status_code=201)
 def create_location(location: StorageLocation):
-    try:
-        add_location(location.location_code)
-    except sqlite3.IntegrityError:
-        raise HTTPException(status_code=409, detail="Location already exists")
-    return location
+	try:
+		add_location(location.location_code)
+	except sqlite3.IntegrityError:
+		raise HTTPException(status_code=409, detail="Location already exists")
+	return location
 
 @app.post("/products", response_model=Product, status_code=201)
 def create_product(product: Product):

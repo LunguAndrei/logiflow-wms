@@ -2,7 +2,7 @@ import sqlite3
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from contextlib import asynccontextmanager
-from app.database import confirm_inventory_picks, receive_inventory, pick_inventory, add_location, add_product, get_box_types, get_inventory_balances, get_locations, get_products, initialize_database
+from app.database import confirm_order_picks, update_order_status, get_order, create_order, confirm_inventory_picks, receive_inventory, pick_inventory, add_location, add_product, get_box_types, get_inventory_balances, get_locations, get_products, initialize_database
 from app.packing import build_packing_plan
 from app.palletizing import build_pallet_plan
 from app.trucking import build_truck_plan
@@ -49,6 +49,9 @@ class PackingItem(BaseModel):
 	quantity: int = Field(gt=0)
 
 class PackingRequest(BaseModel):
+	items: list[PackingItem] = Field(min_length=1)
+
+class OrderCreateRequest(BaseModel):
 	items: list[PackingItem] = Field(min_length=1)
 
 class PalletBoxRequest(BaseModel):
@@ -195,6 +198,33 @@ def create_product(product: Product):
 		raise HTTPException(status_code=409, detail="SKU already exists")
 	return product_data
 
+@app.post("/orders", status_code=201)
+def create_order_endpoint(request: OrderCreateRequest):
+	try:
+		order_id = create_order(
+			[item.model_dump() for item in request.items]
+		)
+	except sqlite3.IntegrityError:
+		raise HTTPException(
+			status_code=404,
+			detail="One or more products were not found",
+		)
+
+	return {
+		"order_id": order_id,
+		"status": "created",
+	}
+
+@app.get("/orders/{order_id}")
+def get_order_endpoint(order_id: int):
+	order = get_order(order_id)
+	if order is None:
+		raise HTTPException(
+			status_code=404,
+			detail=f"Order '{order_id}' not found",
+		)
+	return order
+
 def prepare_packing_products(request: PackingRequest):
 	products_by_sku = {
 		product["sku"]: product
@@ -238,6 +268,115 @@ def prepare_packing_products(request: PackingRequest):
 		packing_products.extend([product] * quantity)
 
 	return packing_products
+
+@app.post("/orders/{order_id}/plan")
+def plan_saved_order(order_id: int):
+	order = get_order(order_id)
+	if order is None:
+		raise HTTPException(
+			status_code=404,
+			detail=f"Order '{order_id}' not found",
+		)
+
+	if order["status"] != "created":
+		raise HTTPException(
+			status_code=409,
+			detail="Only created orders can be planned",
+		)
+
+	request = PackingRequest(
+		items=[
+			PackingItem(**item)
+			for item in order["items"]
+		]
+	)
+	packing_products = prepare_packing_products(request)
+
+	try:
+		pick_plan = build_pick_plan(
+			[(item.sku, item.quantity) for item in request.items],
+			get_inventory_balances(),
+		)
+	except ValueError as error:
+		raise HTTPException(status_code=409, detail=str(error))
+
+	box_types = get_box_types()
+	packing_plan = build_packing_plan(packing_products, box_types)
+	pallet_plan = build_pallet_plan(packing_plan["boxes"], box_types)
+	truck_plan = build_truck_plan(pallet_plan["pallets"])
+
+	if not update_order_status(order_id, "created", "planned"):
+		raise HTTPException(
+			status_code=409,
+			detail="Order status changed while planning",
+		)
+
+	return {
+		"order_id": order_id,
+		"status": "planned",
+		"picking": pick_plan,
+		"packing": packing_plan,
+		"palletization": pallet_plan,
+		"trucking": truck_plan,
+	}
+
+@app.post("/orders/{order_id}/confirm-pick")
+def confirm_order_pick_endpoint(
+	order_id: int,
+	request: PickConfirmationRequest,
+):
+	order = get_order(order_id)
+	if order is None:
+		raise HTTPException(
+			status_code=404,
+			detail=f"Order '{order_id}' not found",
+		)
+
+	if order["status"] != "planned":
+		raise HTTPException(
+			status_code=409,
+			detail="Only planned orders can be picked",
+		)
+
+	picks = [pick.model_dump() for pick in request.picks]
+
+	if not confirm_order_picks(order_id, picks):
+		raise HTTPException(
+			status_code=409,
+			detail="Pick quantities or available stock do not match the order",
+		)
+
+	return {
+		"order_id": order_id,
+		"status": "picked",
+		"picks": picks,
+	}
+
+@app.post("/orders/{order_id}/ship")
+def ship_order_endpoint(order_id: int):
+	order = get_order(order_id)
+	if order is None:
+		raise HTTPException(
+			status_code=404,
+			detail=f"Order '{order_id}' not found",
+		)
+
+	if order["status"] != "picked":
+		raise HTTPException(
+			status_code=409,
+			detail="Only picked orders can be shipped",
+		)
+
+	if not update_order_status(order_id, "picked", "shipped"):
+		raise HTTPException(
+			status_code=409,
+			detail="Order status changed while shipping",
+		)
+
+	return {
+		"order_id": order_id,
+		"status": "shipped",
+	}
 
 @app.post("/packing/plan")
 def create_packing_plan(request: PackingRequest):

@@ -252,3 +252,228 @@ def test_outbound_pick_confirmation_returns_409_when_stock_changed(monkeypatch):
 	assert response.json()["detail"] == (
 		"Stock changed or insufficient at one of the requested locations"
 	)
+
+def test_create_order_returns_201(monkeypatch):
+	monkeypatch.setattr(main, "initialize_database", lambda: None)
+	monkeypatch.setattr(main, "create_order", lambda items: 123)
+
+	with TestClient(main.app) as client:
+		response = client.post(
+			"/orders",
+			json={
+				"items": [
+					{"sku": "ADH-001", "quantity": 2},
+				],
+			},
+		)
+
+	assert response.status_code == 201
+	assert response.json() == {
+		"order_id": 123,
+		"status": "created",
+	}
+
+
+def test_create_order_returns_404_for_unknown_sku(monkeypatch):
+	def raise_integrity_error(items):
+		raise main.sqlite3.IntegrityError("foreign key constraint failed")
+
+	monkeypatch.setattr(main, "initialize_database", lambda: None)
+	monkeypatch.setattr(main, "create_order", raise_integrity_error)
+
+	with TestClient(main.app) as client:
+		response = client.post(
+			"/orders",
+			json={
+				"items": [
+					{"sku": "MISSING-SKU", "quantity": 1},
+				],
+			},
+		)
+
+	assert response.status_code == 404
+	assert response.json()["detail"] == "One or more products were not found"
+
+def test_get_order_returns_order(monkeypatch):
+	order = {
+		"order_id": 123,
+		"status": "created",
+		"created_at": "2026-11-08 12:00:00",
+		"items": [{"sku": "ADH-001", "quantity": 2}],
+	}
+
+	monkeypatch.setattr(main, "initialize_database", lambda: None)
+	monkeypatch.setattr(main, "get_order", lambda order_id: order)
+
+	with TestClient(main.app) as client:
+		response = client.get("/orders/123")
+
+	assert response.status_code == 200
+	assert response.json() == order
+
+
+def test_get_order_returns_404_when_order_does_not_exist(monkeypatch):
+	monkeypatch.setattr(main, "initialize_database", lambda: None)
+	monkeypatch.setattr(main, "get_order", lambda order_id: None)
+
+	with TestClient(main.app) as client:
+		response = client.get("/orders/999")
+
+	assert response.status_code == 404
+	assert response.json()["detail"] == "Order '999' not found"
+
+def test_plan_saved_order_returns_plan(monkeypatch):
+	order = {
+		"order_id": 123,
+		"status": "created",
+		"items": [{"sku": "ADH-001", "quantity": 1}],
+	}
+	pick_result = [
+		{
+			"sku": "ADH-001",
+			"location_code": "A-01-01-01",
+			"quantity": 1,
+		}
+	]
+
+	monkeypatch.setattr(main, "initialize_database", lambda: None)
+	monkeypatch.setattr(main, "get_order", lambda order_id: order)
+	monkeypatch.setattr(main, "prepare_packing_products", lambda request: [])
+	monkeypatch.setattr(main, "get_inventory_balances", lambda: [])
+	monkeypatch.setattr(
+		main,
+		"build_pick_plan",
+		lambda requested_items, balances: pick_result,
+	)
+	monkeypatch.setattr(main, "get_box_types", lambda: [])
+	monkeypatch.setattr(
+		main, "build_packing_plan", lambda products, boxes: {"boxes": []}
+	)
+	monkeypatch.setattr(
+		main, "build_pallet_plan", lambda boxes, box_types: {"pallets": []}
+	)
+	monkeypatch.setattr(
+		main, "build_truck_plan", lambda pallets: {"trucks": []}
+	)
+	monkeypatch.setattr(
+		main, "update_order_status", lambda order_id, old, new: True
+	)
+
+	with TestClient(main.app) as client:
+		response = client.post("/orders/123/plan")
+
+	assert response.status_code == 200
+	assert response.json()["status"] == "planned"
+	assert response.json()["picking"] == pick_result
+
+
+def test_plan_saved_order_rejects_already_planned_order(monkeypatch):
+	order = {
+		"order_id": 123,
+		"status": "planned",
+		"items": [{"sku": "ADH-001", "quantity": 1}],
+	}
+
+	monkeypatch.setattr(main, "initialize_database", lambda: None)
+	monkeypatch.setattr(main, "get_order", lambda order_id: order)
+
+	with TestClient(main.app) as client:
+		response = client.post("/orders/123/plan")
+
+	assert response.status_code == 409
+	assert response.json()["detail"] == "Only created orders can be planned"
+
+def test_confirm_order_pick_returns_picked_status(monkeypatch):
+	order = {"order_id": 123, "status": "planned"}
+	picks = [
+		{
+			"sku": "ADH-001",
+			"location_code": "A-01-01-01",
+			"quantity": 2,
+		},
+	]
+
+	monkeypatch.setattr(main, "initialize_database", lambda: None)
+	monkeypatch.setattr(main, "get_order", lambda order_id: order)
+	monkeypatch.setattr(
+		main,
+		"confirm_order_picks",
+		lambda order_id, picks: True,
+	)
+
+	with TestClient(main.app) as client:
+		response = client.post(
+			"/orders/123/confirm-pick",
+			json={"picks": picks},
+		)
+
+	assert response.status_code == 200
+	assert response.json() == {
+		"order_id": 123,
+		"status": "picked",
+		"picks": picks,
+	}
+
+
+def test_confirm_order_pick_returns_409_when_pick_fails(monkeypatch):
+	order = {"order_id": 123, "status": "planned"}
+
+	monkeypatch.setattr(main, "initialize_database", lambda: None)
+	monkeypatch.setattr(main, "get_order", lambda order_id: order)
+	monkeypatch.setattr(
+		main,
+		"confirm_order_picks",
+		lambda order_id, picks: False,
+	)
+
+	with TestClient(main.app) as client:
+		response = client.post(
+			"/orders/123/confirm-pick",
+			json={
+				"picks": [
+					{
+						"sku": "ADH-001",
+						"location_code": "A-01-01-01",
+						"quantity": 2,
+					},
+				],
+			},
+		)
+
+	assert response.status_code == 409
+	assert response.json()["detail"] == (
+		"Pick quantities or available stock do not match the order"
+	)
+
+def test_ship_order_changes_status_to_shipped(monkeypatch):
+	order = {"order_id": 123, "status": "picked"}
+
+	monkeypatch.setattr(main, "initialize_database", lambda: None)
+	monkeypatch.setattr(main, "get_order", lambda order_id: order)
+	monkeypatch.setattr(
+		main,
+		"update_order_status",
+		lambda order_id, expected_status, new_status: True,
+	)
+
+	with TestClient(main.app) as client:
+		response = client.post("/orders/123/ship")
+
+	assert response.status_code == 200
+	assert response.json() == {
+		"order_id": 123,
+		"status": "shipped",
+	}
+
+
+def test_ship_order_rejects_order_not_yet_picked(monkeypatch):
+	order = {"order_id": 123, "status": "planned"}
+
+	monkeypatch.setattr(main, "initialize_database", lambda: None)
+	monkeypatch.setattr(main, "get_order", lambda order_id: order)
+
+	with TestClient(main.app) as client:
+		response = client.post("/orders/123/ship")
+
+	assert response.status_code == 409
+	assert response.json()["detail"] == "Only picked orders can be shipped"

@@ -142,6 +142,29 @@ def initialize_database():
 			)
 			"""
 		)
+		connection.execute(
+			"""
+			CREATE TABLE IF NOT EXISTS orders (
+				order_id INTEGER PRIMARY KEY AUTOINCREMENT,
+				status TEXT NOT NULL DEFAULT 'created'
+					CHECK (status IN ('created', 'planned', 'picked', 'shipped')),
+				created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+			)
+			"""
+		)
+		connection.execute(
+			"""
+			CREATE TABLE IF NOT EXISTS order_items (
+				order_id INTEGER NOT NULL,
+				sku TEXT NOT NULL,
+				quantity INTEGER NOT NULL CHECK (quantity > 0),
+				PRIMARY KEY (order_id, sku),
+				FOREIGN KEY (order_id) REFERENCES orders(order_id)
+					ON DELETE CASCADE,
+				FOREIGN KEY (sku) REFERENCES products(sku)
+			)
+			"""
+		)
 		connection.executemany(
 			"""
 			INSERT OR IGNORE INTO products
@@ -427,6 +450,179 @@ def receive_inventory(sku, location_code, quantity):
 
 		connection.commit()
 		return True
+	finally:
+		connection.close()
+
+def create_order(items):
+	connection = connect_database()
+	try:
+		quantities_by_sku = {}
+
+		for item in items:
+			sku = item["sku"]
+			quantities_by_sku[sku] = (
+				quantities_by_sku.get(sku, 0) + item["quantity"]
+			)
+
+		order_cursor = connection.execute(
+			"INSERT INTO orders DEFAULT VALUES"
+		)
+		order_id = order_cursor.lastrowid
+
+		connection.executemany(
+			"""
+			INSERT INTO order_items (order_id, sku, quantity)
+			VALUES (?, ?, ?)
+			""",
+			[
+				(order_id, sku, quantity)
+				for sku, quantity in quantities_by_sku.items()
+			],
+		)
+
+		connection.commit()
+		return order_id
+	finally:
+		connection.close()
+
+def update_order_status(order_id, expected_status, new_status):
+	connection = connect_database()
+	try:
+		cursor = connection.execute(
+			"""
+			UPDATE orders
+			SET status = ?
+			WHERE order_id = ? AND status = ?
+			""",
+			(new_status, order_id, expected_status),
+		)
+		connection.commit()
+		return cursor.rowcount == 1
+	finally:
+		connection.close()
+
+def confirm_order_picks(order_id, picks):
+	connection = connect_database()
+	try:
+		order_row = connection.execute(
+			"SELECT status FROM orders WHERE order_id = ?",
+			(order_id,),
+		).fetchone()
+
+		if order_row is None or order_row[0] != "planned":
+			connection.rollback()
+			return False
+
+		order_items = connection.execute(
+			"""
+			SELECT sku, quantity
+			FROM order_items
+			WHERE order_id = ?
+			""",
+			(order_id,),
+		).fetchall()
+
+		required_by_sku = {}
+		for sku, quantity in order_items:
+			required_by_sku[sku] = (
+				required_by_sku.get(sku, 0) + quantity
+			)
+
+		picked_by_sku = {}
+		for pick in picks:
+			sku = pick["sku"]
+			picked_by_sku[sku] = (
+				picked_by_sku.get(sku, 0) + pick["quantity"]
+			)
+
+		if picked_by_sku != required_by_sku:
+			connection.rollback()
+			return False
+
+		for pick in picks:
+			quantity = pick["quantity"]
+
+			balance_update = connection.execute(
+				"""
+				UPDATE inventory_balances
+				SET quantity = quantity - ?
+				WHERE sku = ?
+					AND location_code = ?
+					AND quantity >= ?
+				""",
+				(
+					quantity,
+					pick["sku"],
+					pick["location_code"],
+					quantity,
+				),
+			)
+
+			if balance_update.rowcount == 0:
+				connection.rollback()
+				return False
+
+			product_update = connection.execute(
+				"""
+				UPDATE products
+				SET quantity_on_hand = quantity_on_hand - ?
+				WHERE sku = ? AND quantity_on_hand >= ?
+				""",
+				(quantity, pick["sku"], quantity),
+			)
+
+			if product_update.rowcount == 0:
+				connection.rollback()
+				return False
+
+		status_update = connection.execute(
+			"""
+			UPDATE orders
+			SET status = 'picked'
+			WHERE order_id = ? AND status = 'planned'
+			""",
+			(order_id,),
+		)
+
+		if status_update.rowcount == 0:
+			connection.rollback()
+			return False
+
+		connection.commit()
+		return True
+	finally:
+		connection.close()
+
+
+def get_order(order_id):
+	connection = connect_database()
+	connection.row_factory = sqlite3.Row
+	try:
+		order_row = connection.execute(
+			"""
+			SELECT order_id, status, created_at
+			FROM orders
+			WHERE order_id = ?
+			""",
+			(order_id,),
+		).fetchone()
+
+		if order_row is None:
+			return None
+
+		item_rows = connection.execute(
+			"""
+			SELECT sku, quantity
+			FROM order_items
+			WHERE order_id = ?
+			ORDER BY sku
+			""",
+			(order_id,),
+		).fetchall()
+
+		order = dict(order_row)
+		order["items"] = [dict(row) for row in item_rows]
+		return order
 	finally:
 		connection.close()
 

@@ -359,6 +359,50 @@ def pick_inventory(sku, location_code, quantity):
 	finally:
 		connection.close()
 
+def confirm_inventory_picks(picks):
+	connection = connect_database()
+	try:
+		for pick in picks:
+			quantity = pick["quantity"]
+
+			balance_update = connection.execute(
+				"""
+				UPDATE inventory_balances
+				SET quantity = quantity - ?
+				WHERE sku = ?
+					AND location_code = ?
+					AND quantity >= ?
+				""",
+				(
+					quantity,
+					pick["sku"],
+					pick["location_code"],
+					quantity,
+				),
+			)
+
+			if balance_update.rowcount == 0:
+				connection.rollback()
+				return False
+
+			product_update = connection.execute(
+				"""
+				UPDATE products
+				SET quantity_on_hand = quantity_on_hand - ?
+				WHERE sku = ? AND quantity_on_hand >= ?
+				""",
+				(quantity, pick["sku"], quantity),
+			)
+
+			if product_update.rowcount == 0:
+				connection.rollback()
+				return False
+
+		connection.commit()
+		return True
+	finally:
+		connection.close()
+
 def receive_inventory(sku, location_code, quantity):
 	connection = connect_database()
 	try:

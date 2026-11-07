@@ -2,7 +2,7 @@ import sqlite3
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from contextlib import asynccontextmanager
-from app.database import receive_inventory, pick_inventory, add_location, add_product, get_box_types, get_inventory_balances, get_locations, get_products, initialize_database
+from app.database import confirm_inventory_picks, receive_inventory, pick_inventory, add_location, add_product, get_box_types, get_inventory_balances, get_locations, get_products, initialize_database
 from app.packing import build_packing_plan
 from app.palletizing import build_pallet_plan
 from app.trucking import build_truck_plan
@@ -88,6 +88,9 @@ class InventoryPickRequest(BaseModel):
 	location_code: str
 	quantity: int = Field(gt=0)
 
+class PickConfirmationRequest(BaseModel):
+	picks: list[InventoryPickRequest] = Field(min_length=1)
+
 class InventoryReceiveRequest(BaseModel):
 	sku: str
 	location_code: str
@@ -157,6 +160,22 @@ def receive_inventory_item(request: InventoryReceiveRequest):
 		"location_code": request.location_code,
 		"quantity_received": request.quantity,
 		"status": "received",
+	}
+
+@app.post("/outbound/pick/confirm")
+def confirm_outbound_pick(request: PickConfirmationRequest):
+	picks = [pick.model_dump() for pick in request.picks]
+
+	confirmed = confirm_inventory_picks(picks)
+	if not confirmed:
+		raise HTTPException(
+			status_code=409,
+			detail="Stock changed or insufficient at one of the requested locations",
+		)
+
+	return {
+		"status": "confirmed",
+		"picks": picks,
 	}
 
 @app.post("/locations", response_model=StorageLocation, status_code=201)

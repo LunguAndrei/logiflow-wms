@@ -7,6 +7,11 @@ DATABASE_PATH = Path(
 	os.environ.get("DATABASE_PATH", str(LOCAL_DATABASE_PATH))
 )
 
+def connect_database():
+    connection = sqlite3.connect(DATABASE_PATH)
+    connection.execute("PRAGMA foreign_keys = ON")
+    return connection
+
 seed_products = [
 	("BRG-001", "Industrial bearing", "Components", "piece", 120, 30, 8, 8, 5, 0.70),
 	("CAB-003", "3 m cable roll", "Electrical", "roll", 5, 2, 15, 15, 4, 0.35),
@@ -72,7 +77,7 @@ seed_box_types = [
 ]
 
 def initialize_database():
-	connection = sqlite3.connect(DATABASE_PATH)
+	connection = connect_database()
 	try:
 		connection.execute(
 			"""
@@ -86,6 +91,7 @@ def initialize_database():
 			)
 			"""
 		)
+
 		existing_columns = {
 			row[1] for row in connection.execute("PRAGMA table_info(products)")
 		}
@@ -124,6 +130,18 @@ def initialize_database():
 			)
 			"""
 		)
+		connection.execute(
+			"""
+			CREATE TABLE IF NOT EXISTS inventory_balances (
+				sku TEXT NOT NULL,
+				location_code TEXT NOT NULL,
+				quantity INTEGER NOT NULL CHECK (quantity >= 0),
+				PRIMARY KEY (sku, location_code),
+				FOREIGN KEY (sku) REFERENCES products(sku),
+				FOREIGN KEY (location_code) REFERENCES storage_locations(location_code)
+			)
+			"""
+		)
 		connection.executemany(
 			"""
 			INSERT OR IGNORE INTO products
@@ -141,13 +159,65 @@ def initialize_database():
 			""",
 			seed_products,
 		)
+		products_without_balances = connection.execute(
+			"""
+			SELECT p.sku, p.quantity_on_hand
+			FROM products AS p
+			LEFT JOIN inventory_balances AS ib ON ib.sku = p.sku
+			WHERE ib.sku IS NULL
+			ORDER BY p.sku
+			"""
+		).fetchall()
+
+		used_locations = {
+			row[0]
+			for row in connection.execute(
+				"SELECT location_code FROM storage_locations"
+			)
+		}
+
+		location_index = 0
+
+		for sku, quantity in products_without_balances:
+			while True:
+				rack_number = location_index // 60 + 1
+				level_number = (location_index % 60) // 10 + 1
+				position_number = location_index % 10 + 1
+
+				if rack_number > 20:
+					raise ValueError("No free locations remain in aisle A")
+
+				location_code = (
+					f"A-{rack_number:02d}-{level_number:02d}-{position_number:02d}"
+				)
+				location_index += 1
+
+				if location_code not in used_locations:
+					break
+
+			connection.execute(
+				"""
+				INSERT OR IGNORE INTO storage_locations (location_code)
+				VALUES (?)
+				""",
+				(location_code,),
+			)
+			connection.execute(
+				"""
+				INSERT INTO inventory_balances
+					(sku, location_code, quantity)
+				VALUES (?, ?, ?)
+				""",
+				(sku, location_code, quantity),
+			)
+			used_locations.add(location_code)
 		connection.executemany(
 			"""
 			INSERT INTO box_types
 				(code, capacity_liters,
-				 inner_length_cm, inner_width_cm, inner_height_cm,
-				 outer_length_cm, outer_width_cm, outer_height_cm,
-				 empty_weight_kg, max_payload_kg)
+				inner_length_cm, inner_width_cm, inner_height_cm,
+				outer_length_cm, outer_width_cm, outer_height_cm,
+				empty_weight_kg, max_payload_kg)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(code) DO UPDATE SET
 				capacity_liters = excluded.capacity_liters,
@@ -161,13 +231,13 @@ def initialize_database():
 				max_payload_kg = excluded.max_payload_kg
 			""",
 			seed_box_types,
-		)	
+		)
 		connection.commit()
 	finally:
 		connection.close()
 
 def get_products():
-	connection = sqlite3.connect(DATABASE_PATH)
+	connection = connect_database()
 	connection.row_factory = sqlite3.Row
 	try:
 		rows = connection.execute(
@@ -182,15 +252,15 @@ def get_products():
 		connection.close()
 
 def get_box_types():
-	connection = sqlite3.connect(DATABASE_PATH)
+	connection = connect_database()
 	connection.row_factory = sqlite3.Row
 	try:
 		rows = connection.execute(
 			"""
 			SELECT code, capacity_liters,
-			       inner_length_cm, inner_width_cm, inner_height_cm,
-			       outer_length_cm, outer_width_cm, outer_height_cm,
-			       empty_weight_kg, max_payload_kg
+				   inner_length_cm, inner_width_cm, inner_height_cm,
+				   outer_length_cm, outer_width_cm, outer_height_cm,
+				   empty_weight_kg, max_payload_kg
 			FROM box_types
 			ORDER BY capacity_liters
 			"""
@@ -200,7 +270,7 @@ def get_box_types():
 		connection.close()
 
 def add_product(product_data):
-	connection = sqlite3.connect(DATABASE_PATH)
+	connection = connect_database()
 	try:
 		connection.execute(
 			"""
@@ -226,30 +296,79 @@ def add_product(product_data):
 		connection.close()
 
 def get_locations():
-    connection = sqlite3.connect(DATABASE_PATH)
-    try:
-        rows = connection.execute(
-            """
-            SELECT location_code
-            FROM storage_locations
-            ORDER BY location_code
-            """
-        ).fetchall()
-        return [{"location_code": row[0]} for row in rows]
-    finally:
-        connection.close()
+	connection = connect_database()
+	try:
+		rows = connection.execute(
+			"""
+			SELECT location_code
+			FROM storage_locations
+			ORDER BY location_code
+			"""
+		).fetchall()
+		return [{"location_code": row[0]} for row in rows]
+	finally:
+		connection.close()
 
+
+def get_inventory_balances():
+	connection = connect_database()
+	connection.row_factory = sqlite3.Row
+	try:
+		rows = connection.execute(
+			"""
+			SELECT sku, location_code, quantity
+			FROM inventory_balances
+			ORDER BY location_code, sku
+			"""
+		).fetchall()
+		return [dict(row) for row in rows]
+	finally:
+		connection.close()
+
+def pick_inventory(sku, location_code, quantity):
+	connection = connect_database()
+	try:
+		balance_update = connection.execute(
+			"""
+			UPDATE inventory_balances
+			SET quantity = quantity - ?
+			WHERE sku = ? AND location_code = ? AND quantity >= ?
+			""",
+			(quantity, sku, location_code, quantity),
+		)
+
+		if balance_update.rowcount == 0:
+			connection.rollback()
+			return False
+
+		product_update = connection.execute(
+			"""
+			UPDATE products
+			SET quantity_on_hand = quantity_on_hand - ?
+			WHERE sku = ? AND quantity_on_hand >= ?
+			""",
+			(quantity, sku, quantity),
+		)
+
+		if product_update.rowcount == 0:
+			connection.rollback()
+			return False
+
+		connection.commit()
+		return True
+	finally:
+		connection.close()
 
 def add_location(location_code):
-    connection = sqlite3.connect(DATABASE_PATH)
-    try:
-        connection.execute(
-            """
-            INSERT INTO storage_locations (location_code)
-            VALUES (?)
-            """,
-            (location_code,),
-        )
-        connection.commit()
-    finally:
-        connection.close()
+	connection = connect_database()
+	try:
+		connection.execute(
+			"""
+			INSERT INTO storage_locations (location_code)
+			VALUES (?)
+			""",
+			(location_code,),
+		)
+		connection.commit()
+	finally:
+		connection.close()

@@ -77,7 +77,7 @@ async function loadDashboard() {
 			`${products.length} products`;
 
 		renderProducts(products, lowStockProducts);
-        renderMovements(movements);
+		renderMovements(movements);
 
 		apiStatus.textContent = "Connected";
 		statusDot.classList.add("is-connected");

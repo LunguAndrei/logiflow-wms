@@ -138,7 +138,11 @@ def test_confirm_order_picks_updates_stock_and_status(fresh_database):
 	assert updated_balances[("ANCHOR-01", anchor_balance["location_code"])] == anchor_balance["quantity"] - 1
 	assert updated_products["ADH-001"] == products["ADH-001"] - 2
 	assert updated_products["ANCHOR-01"] == products["ANCHOR-01"] - 1
+	movements = database.get_inventory_movements()
 
+	assert len(movements) == 2
+	assert all(movement["movement_type"] == "pick" for movement in movements)
+	assert all(movement["order_id"] == order_id for movement in movements)
 
 def test_confirm_order_picks_rolls_back_when_a_location_fails(fresh_database):
 	order_id = database.create_order([

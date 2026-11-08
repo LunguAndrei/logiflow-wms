@@ -12,6 +12,23 @@ def connect_database():
     connection.execute("PRAGMA foreign_keys = ON")
     return connection
 
+def record_inventory_movement(
+	connection,
+	sku,
+	location_code,
+	movement_type,
+	quantity,
+	order_id=None,
+):
+	connection.execute(
+		"""
+		INSERT INTO inventory_movements
+			(sku, location_code, movement_type, quantity, order_id)
+		VALUES (?, ?, ?, ?, ?)
+		""",
+		(sku, location_code, movement_type, quantity, order_id),
+	)
+
 seed_products = [
 	("BRG-001", "Industrial bearing", "Components", "piece", 120, 30, 8, 8, 5, 0.70),
 	("CAB-003", "3 m cable roll", "Electrical", "roll", 5, 2, 15, 15, 4, 0.35),
@@ -162,6 +179,24 @@ def initialize_database():
 				FOREIGN KEY (order_id) REFERENCES orders(order_id)
 					ON DELETE CASCADE,
 				FOREIGN KEY (sku) REFERENCES products(sku)
+			)
+			"""
+		)
+		connection.execute(
+			"""
+			CREATE TABLE IF NOT EXISTS inventory_movements (
+				movement_id INTEGER PRIMARY KEY AUTOINCREMENT,
+				sku TEXT NOT NULL,
+				location_code TEXT NOT NULL,
+				movement_type TEXT NOT NULL
+					CHECK (movement_type IN ('receive', 'pick')),
+				quantity INTEGER NOT NULL CHECK (quantity > 0),
+				order_id INTEGER,
+				created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (sku) REFERENCES products(sku),
+				FOREIGN KEY (location_code)
+					REFERENCES storage_locations(location_code),
+				FOREIGN KEY (order_id) REFERENCES orders(order_id)
 			)
 			"""
 		)
@@ -348,6 +383,22 @@ def get_inventory_balances():
 	finally:
 		connection.close()
 
+def get_inventory_movements():
+	connection = connect_database()
+	connection.row_factory = sqlite3.Row
+	try:
+		rows = connection.execute(
+			"""
+			SELECT movement_id, sku, location_code, movement_type,
+			       quantity, order_id, created_at
+			FROM inventory_movements
+			ORDER BY movement_id DESC
+			"""
+		).fetchall()
+		return [dict(row) for row in rows]
+	finally:
+		connection.close()
+
 def pick_inventory(sku, location_code, quantity):
 	connection = connect_database()
 	try:
@@ -376,7 +427,13 @@ def pick_inventory(sku, location_code, quantity):
 		if product_update.rowcount == 0:
 			connection.rollback()
 			return False
-
+		record_inventory_movement(
+			connection,
+			sku,
+			location_code,
+			"pick",
+			quantity,
+		)
 		connection.commit()
 		return True
 	finally:
@@ -416,10 +473,17 @@ def confirm_inventory_picks(picks):
 				""",
 				(quantity, pick["sku"], quantity),
 			)
-
 			if product_update.rowcount == 0:
 				connection.rollback()
 				return False
+
+			record_inventory_movement(
+				connection,
+				pick["sku"],
+				pick["location_code"],
+				"pick",
+				quantity,
+			)
 
 		connection.commit()
 		return True
@@ -447,7 +511,13 @@ def receive_inventory(sku, location_code, quantity):
 			""",
 			(quantity, sku),
 		)
-
+		record_inventory_movement(
+			connection,
+			sku,
+			location_code,
+			"receive",
+			quantity,
+		)
 		connection.commit()
 		return True
 	finally:
@@ -574,7 +644,14 @@ def confirm_order_picks(order_id, picks):
 			if product_update.rowcount == 0:
 				connection.rollback()
 				return False
-
+			record_inventory_movement(
+				connection,
+				pick["sku"],
+				pick["location_code"],
+				"pick",
+				quantity,
+				order_id,
+			)
 		status_update = connection.execute(
 			"""
 			UPDATE orders

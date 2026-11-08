@@ -62,6 +62,10 @@ def test_confirm_inventory_picks_updates_all_lines(isolated_database):
 	assert updated_balances[("ANCHOR-01", anchor_location)] == balances[("ANCHOR-01", anchor_location)] - 1
 	assert updated_products["ADH-001"] == products["ADH-001"] - 1
 	assert updated_products["ANCHOR-01"] == products["ANCHOR-01"] - 1
+	movements = database.get_inventory_movements()
+
+	assert len(movements) == len(picks)
+	assert all(movement["movement_type"] == "pick" for movement in movements)
 
 
 def test_confirm_inventory_picks_rolls_back_all_lines_when_one_fails(isolated_database):
@@ -104,3 +108,46 @@ def test_confirm_inventory_picks_rolls_back_all_lines_when_one_fails(isolated_da
 
 	assert updated_balance["quantity"] == balance["quantity"]
 	assert updated_product["quantity_on_hand"] == product["quantity_on_hand"]
+	assert database.get_inventory_movements() == []
+
+def test_receive_inventory_records_movement(isolated_database):
+	balance = next(
+		item
+		for item in database.get_inventory_balances()
+		if item["sku"] == "ADH-001"
+	)
+
+	assert database.receive_inventory(
+		"ADH-001",
+		balance["location_code"],
+		2,
+	) is True
+
+	movements = database.get_inventory_movements()
+
+	assert len(movements) == 1
+	assert movements[0]["sku"] == "ADH-001"
+	assert movements[0]["location_code"] == balance["location_code"]
+	assert movements[0]["movement_type"] == "receive"
+	assert movements[0]["quantity"] == 2
+	assert movements[0]["order_id"] is None
+
+def test_pick_inventory_records_movement(isolated_database):
+	balance = next(
+		item
+		for item in database.get_inventory_balances()
+		if item["sku"] == "ADH-001"
+	)
+
+	assert database.pick_inventory(
+		"ADH-001",
+		balance["location_code"],
+		1,
+	) is True
+
+	movement = database.get_inventory_movements()[0]
+	assert movement["sku"] == "ADH-001"
+	assert movement["location_code"] == balance["location_code"]
+	assert movement["movement_type"] == "pick"
+	assert movement["quantity"] == 1
+	assert movement["order_id"] is None

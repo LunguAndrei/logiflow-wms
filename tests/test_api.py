@@ -477,3 +477,126 @@ def test_ship_order_rejects_order_not_yet_picked(monkeypatch):
 
 	assert response.status_code == 409
 	assert response.json()["detail"] == "Only picked orders can be shipped"
+
+def test_inventory_transfer_returns_success(monkeypatch):
+	monkeypatch.setattr(main, "initialize_database", lambda: None)
+	monkeypatch.setattr(
+		main,
+		"transfer_inventory",
+		lambda sku, source_location_code, destination_location_code, quantity: True,
+	)
+
+	with TestClient(main.app) as client:
+		response = client.post(
+			"/inventory/transfer",
+			json={
+				"sku": "ADH-001",
+				"source_location_code": "A-01-01-01",
+				"destination_location_code": "A-01-01-02",
+				"quantity": 2,
+			},
+		)
+
+	assert response.status_code == 200
+	assert response.json() == {
+		"sku": "ADH-001",
+		"source_location_code": "A-01-01-01",
+		"destination_location_code": "A-01-01-02",
+		"quantity_transferred": 2,
+		"status": "transferred",
+	}
+
+def test_inventory_transfer_returns_409_when_transfer_cannot_be_done(monkeypatch):
+	monkeypatch.setattr(main, "initialize_database", lambda: None)
+	monkeypatch.setattr(
+		main,
+		"transfer_inventory",
+		lambda sku, source_location_code, destination_location_code, quantity: False,
+	)
+
+	with TestClient(main.app) as client:
+		response = client.post(
+			"/inventory/transfer",
+			json={
+				"sku": "ADH-001",
+				"source_location_code": "A-01-01-01",
+				"destination_location_code": "A-01-01-02",
+				"quantity": 2,
+			},
+		)
+
+	assert response.status_code == 409
+	assert response.json()["detail"] == (
+		"Transfer blocked: insufficient source stock, same location, or destination occupied by another SKU"
+	)
+
+def test_inventory_transfer_returns_404_when_reference_is_missing(monkeypatch):
+	def raise_integrity_error(
+		sku,
+		source_location_code,
+		destination_location_code,
+		quantity,
+	):
+		raise main.sqlite3.IntegrityError("foreign key constraint failed")
+
+	monkeypatch.setattr(main, "initialize_database", lambda: None)
+	monkeypatch.setattr(
+		main,
+		"transfer_inventory",
+		raise_integrity_error,
+	)
+
+	with TestClient(main.app) as client:
+		response = client.post(
+			"/inventory/transfer",
+			json={
+				"sku": "ADH-001",
+				"source_location_code": "A-01-01-01",
+				"destination_location_code": "MISSING",
+				"quantity": 2,
+			},
+		)
+
+	assert response.status_code == 404
+	assert response.json()["detail"] == "Product or location not found"
+
+def test_inventory_transfer_rejects_zero_quantity(monkeypatch):
+	monkeypatch.setattr(main, "initialize_database", lambda: None)
+
+	with TestClient(main.app) as client:
+		response = client.post(
+			"/inventory/transfer",
+			json={
+				"sku": "ADH-001",
+				"source_location_code": "A-01-01-01",
+				"destination_location_code": "A-01-01-02",
+				"quantity": 0,
+			},
+		)
+
+	assert response.status_code == 422
+
+def test_inventory_receive_returns_409_when_location_has_another_sku(
+	monkeypatch,
+):
+	monkeypatch.setattr(main, "initialize_database", lambda: None)
+	monkeypatch.setattr(
+		main,
+		"receive_inventory",
+		lambda sku, location_code, quantity: False,
+	)
+
+	with TestClient(main.app) as client:
+		response = client.post(
+			"/inventory/receive",
+			json={
+				"sku": "ADH-001",
+				"location_code": "A-01-01-02",
+				"quantity": 1,
+			},
+		)
+
+	assert response.status_code == 409
+	assert response.json()["detail"] == (
+		"Location already contains a different SKU"
+	)

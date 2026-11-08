@@ -2,7 +2,7 @@ import sqlite3
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from contextlib import asynccontextmanager
-from app.database import get_inventory_movements, confirm_order_picks, update_order_status, get_order, create_order, confirm_inventory_picks, receive_inventory, pick_inventory, add_location, add_product, get_box_types, get_inventory_balances, get_locations, get_products, initialize_database
+from app.database import transfer_inventory, get_inventory_movements, confirm_order_picks, update_order_status, get_order, create_order, confirm_inventory_picks, receive_inventory, pick_inventory, add_location, add_product, get_box_types, get_inventory_balances, get_locations, get_products, initialize_database
 from app.packing import build_packing_plan
 from app.palletizing import build_pallet_plan
 from app.trucking import build_truck_plan
@@ -90,6 +90,7 @@ class InventoryMovement(BaseModel):
 	movement_id: int
 	sku: str
 	location_code: str
+	destination_location_code: str | None = None
 	movement_type: str
 	quantity: int = Field(gt=0)
 	order_id: int | None = None
@@ -106,6 +107,12 @@ class PickConfirmationRequest(BaseModel):
 class InventoryReceiveRequest(BaseModel):
 	sku: str
 	location_code: str
+	quantity: int = Field(gt=0)
+
+class InventoryTransferRequest(BaseModel):
+	sku: str
+	source_location_code: str
+	destination_location_code: str
 	quantity: int = Field(gt=0)
 
 @app.get("/products", response_model=list[Product])
@@ -163,7 +170,7 @@ def pick_inventory_item(request: InventoryPickRequest):
 @app.post("/inventory/receive")
 def receive_inventory_item(request: InventoryReceiveRequest):
 	try:
-		receive_inventory(
+		received = receive_inventory(
 			request.sku,
 			request.location_code,
 			request.quantity,
@@ -173,12 +180,45 @@ def receive_inventory_item(request: InventoryReceiveRequest):
 			status_code=404,
 			detail="Product or location not found",
 		)
-
+	if not received:
+		raise HTTPException(
+			status_code=409,
+			detail="Location already contains a different SKU",
+		)
 	return {
 		"sku": request.sku,
 		"location_code": request.location_code,
 		"quantity_received": request.quantity,
 		"status": "received",
+	}
+
+@app.post("/inventory/transfer")
+def transfer_inventory_item(request: InventoryTransferRequest):
+	try:
+		transferred = transfer_inventory(
+			request.sku,
+			request.source_location_code,
+			request.destination_location_code,
+			request.quantity,
+		)
+	except sqlite3.IntegrityError:
+		raise HTTPException(
+			status_code=404,
+			detail="Product or location not found",
+		)
+
+	if not transferred:
+		raise HTTPException(
+			status_code=409,
+			detail="Transfer blocked: insufficient source stock, same location, or destination occupied by another SKU",
+		)
+
+	return {
+		"sku": request.sku,
+		"source_location_code": request.source_location_code,
+		"destination_location_code": request.destination_location_code,
+		"quantity_transferred": request.quantity,
+		"status": "transferred",
 	}
 
 @app.post("/outbound/pick/confirm")

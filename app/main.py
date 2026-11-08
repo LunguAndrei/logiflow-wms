@@ -2,7 +2,7 @@ import sqlite3
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from contextlib import asynccontextmanager
-from app.database import confirm_order_picks, update_order_status, get_order, create_order, confirm_inventory_picks, receive_inventory, pick_inventory, add_location, add_product, get_box_types, get_inventory_balances, get_locations, get_products, initialize_database
+from app.database import get_inventory_movements, confirm_order_picks, update_order_status, get_order, create_order, confirm_inventory_picks, receive_inventory, pick_inventory, add_location, add_product, get_box_types, get_inventory_balances, get_locations, get_products, initialize_database
 from app.packing import build_packing_plan
 from app.palletizing import build_pallet_plan
 from app.trucking import build_truck_plan
@@ -86,6 +86,15 @@ class InventoryBalance(BaseModel):
 	location_code: str
 	quantity: int = Field(ge=0)
 
+class InventoryMovement(BaseModel):
+	movement_id: int
+	sku: str
+	location_code: str
+	movement_type: str
+	quantity: int = Field(gt=0)
+	order_id: int | None = None
+	created_at: str
+
 class InventoryPickRequest(BaseModel):
 	sku: str
 	location_code: str
@@ -122,6 +131,13 @@ def list_locations():
 @app.get("/inventory/by-location", response_model=list[InventoryBalance])
 def list_inventory_by_location():
 	return get_inventory_balances()
+
+@app.get(
+	"/inventory/movements",
+	response_model=list[InventoryMovement],
+)
+def list_inventory_movements():
+	return get_inventory_movements()
 
 @app.post("/inventory/pick")
 def pick_inventory_item(request: InventoryPickRequest):

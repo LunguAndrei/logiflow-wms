@@ -19,14 +19,23 @@ def record_inventory_movement(
 	movement_type,
 	quantity,
 	order_id=None,
+	destination_location_code=None,
 ):
 	connection.execute(
 		"""
 		INSERT INTO inventory_movements
-			(sku, location_code, movement_type, quantity, order_id)
-		VALUES (?, ?, ?, ?, ?)
+			(sku, location_code, destination_location_code,
+			 movement_type, quantity, order_id)
+		VALUES (?, ?, ?, ?, ?, ?)
 		""",
-		(sku, location_code, movement_type, quantity, order_id),
+		(
+			sku,
+			location_code,
+			destination_location_code,
+			movement_type,
+			quantity,
+			order_id,
+		),
 	)
 
 seed_products = [
@@ -188,18 +197,70 @@ def initialize_database():
 				movement_id INTEGER PRIMARY KEY AUTOINCREMENT,
 				sku TEXT NOT NULL,
 				location_code TEXT NOT NULL,
+				destination_location_code TEXT,
 				movement_type TEXT NOT NULL
-					CHECK (movement_type IN ('receive', 'pick')),
+					CHECK (movement_type IN ('receive', 'pick', 'transfer')),
 				quantity INTEGER NOT NULL CHECK (quantity > 0),
 				order_id INTEGER,
 				created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-				FOREIGN KEY (sku) REFERENCES products(sku),
-				FOREIGN KEY (location_code)
-					REFERENCES storage_locations(location_code),
-				FOREIGN KEY (order_id) REFERENCES orders(order_id)
+				FOREIGN KEY (sku)
+                    REFERENCES products(sku),
+                FOREIGN KEY (location_code)
+                    REFERENCES storage_locations(location_code),
+                FOREIGN KEY (destination_location_code)
+                    REFERENCES storage_locations(location_code),
+                FOREIGN KEY (order_id)
+                    REFERENCES orders(order_id)
 			)
 			"""
 		)
+		movement_columns = {
+			row[1]
+			for row in connection.execute(
+				"PRAGMA table_info(inventory_movements)"
+			)
+		}
+
+		if "destination_location_code" not in movement_columns:
+			connection.execute(
+				"""
+				CREATE TABLE inventory_movements_new (
+					movement_id INTEGER PRIMARY KEY AUTOINCREMENT,
+					sku TEXT NOT NULL,
+					location_code TEXT NOT NULL,
+					destination_location_code TEXT,
+					movement_type TEXT NOT NULL
+						CHECK (movement_type IN ('receive', 'pick', 'transfer')),
+					quantity INTEGER NOT NULL CHECK (quantity > 0),
+					order_id INTEGER,
+					created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+					FOREIGN KEY (sku) REFERENCES products(sku),
+					FOREIGN KEY (location_code)
+						REFERENCES storage_locations(location_code),
+					FOREIGN KEY (destination_location_code)
+						REFERENCES storage_locations(location_code),
+					FOREIGN KEY (order_id) REFERENCES orders(order_id)
+				)
+				"""
+			)
+
+			connection.execute(
+				"""
+				INSERT INTO inventory_movements_new (
+					movement_id, sku, location_code, destination_location_code,
+					movement_type, quantity, order_id, created_at
+				)
+				SELECT
+					movement_id, sku, location_code, NULL,
+					movement_type, quantity, order_id, created_at
+				FROM inventory_movements
+				"""
+			)
+
+			connection.execute("DROP TABLE inventory_movements")
+			connection.execute(
+				"ALTER TABLE inventory_movements_new RENAME TO inventory_movements"
+			)
 		connection.executemany(
 			"""
 			INSERT OR IGNORE INTO products
@@ -289,6 +350,14 @@ def initialize_database():
 				max_payload_kg = excluded.max_payload_kg
 			""",
 			seed_box_types,
+		)
+		connection.execute(
+			"""
+			CREATE UNIQUE INDEX IF NOT EXISTS
+				idx_inventory_balances_one_active_sku_per_location
+			ON inventory_balances(location_code)
+			WHERE quantity > 0
+			"""
 		)
 		connection.commit()
 	finally:
@@ -389,8 +458,8 @@ def get_inventory_movements():
 	try:
 		rows = connection.execute(
 			"""
-			SELECT movement_id, sku, location_code, movement_type,
-			       quantity, order_id, created_at
+			SELECT movement_id, sku, location_code, destination_location_code,
+				   movement_type, quantity, order_id, created_at
 			FROM inventory_movements
 			ORDER BY movement_id DESC
 			"""
@@ -493,6 +562,21 @@ def confirm_inventory_picks(picks):
 def receive_inventory(sku, location_code, quantity):
 	connection = connect_database()
 	try:
+		destination_conflict = connection.execute(
+			"""
+			SELECT 1
+			FROM inventory_balances
+			WHERE location_code = ?
+				AND sku != ?
+				AND quantity > 0
+			LIMIT 1
+			""",
+			(location_code, sku),
+		).fetchone()
+
+		if destination_conflict is not None:
+			connection.rollback()
+			return False
 		connection.execute(
 			"""
 			INSERT INTO inventory_balances (sku, location_code, quantity)
@@ -520,6 +604,79 @@ def receive_inventory(sku, location_code, quantity):
 		)
 		connection.commit()
 		return True
+	finally:
+		connection.close()
+
+def transfer_inventory(
+	sku,
+	source_location_code,
+	destination_location_code,
+	quantity,
+):
+	if quantity <= 0 or source_location_code == destination_location_code:
+		return False
+
+	connection = connect_database()
+	try:
+		destination_conflict = connection.execute(
+			"""
+			SELECT 1
+			FROM inventory_balances
+			WHERE location_code = ?
+				AND sku != ?
+				AND quantity > 0
+			LIMIT 1
+			""",
+			(destination_location_code, sku),
+		).fetchone()
+
+		if destination_conflict is not None:
+			connection.rollback()
+			return False
+		source_update = connection.execute(
+			"""
+			UPDATE inventory_balances
+			SET quantity = quantity - ?
+			WHERE sku = ?
+				AND location_code = ?
+				AND quantity >= ?
+			""",
+			(
+				quantity,
+				sku,
+				source_location_code,
+				quantity,
+			),
+		)
+
+		if source_update.rowcount == 0:
+			connection.rollback()
+			return False
+
+		connection.execute(
+			"""
+			INSERT INTO inventory_balances (sku, location_code, quantity)
+			VALUES (?, ?, ?)
+			ON CONFLICT(sku, location_code) DO UPDATE SET
+				quantity = quantity + excluded.quantity
+			""",
+			(sku, destination_location_code, quantity),
+		)
+
+		record_inventory_movement(
+			connection,
+			sku,
+			source_location_code,
+			"transfer",
+			quantity,
+			destination_location_code=destination_location_code,
+		)
+
+		connection.commit()
+		return True
+	except sqlite3.IntegrityError:
+		connection.rollback()
+		raise
 	finally:
 		connection.close()
 

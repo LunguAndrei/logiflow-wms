@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>LogiFlow WMS</title>
+	<link rel="stylesheet" href="/static/styles.css">
+	<script src="/static/app.js" defer></script>
+</head>
+<body>
+	<div class="app-shell">
+		<header class="topbar">
+			<div class="brand">
+				<div class="brand-mark">L</div>
+				<div>
+					<strong>LogiFlow</strong>
+					<span>Warehouse management</span>
+				</div>
+			</div>
+			<div class="api-status">
+				<span class="status-dot"></span>
+				API connection
+				<strong id="api-status">Checking…</strong>
+			</div>
+		</header>
+
+		<main class="main-content">
+			<section class="page-heading">
+				<div>
+					<p class="eyebrow">WAREHOUSE OVERVIEW</p>
+					<h1>Inventory dashboard</h1>
+					<p class="subheading">
+						A clear view of products and stock across your warehouse.
+					</p>
+				</div>
+				<div class="date-label">LOGIFLOW WMS · DEV</div>
+			</section>
+
+			<section class="metrics-grid">
+				<article class="metric-card">
+					<span class="metric-label">Product types</span>
+					<strong id="product-count">—</strong>
+					<span class="metric-note">Registered SKUs</span>
+				</article>
+
+				<article class="metric-card">
+					<span class="metric-label">Units in stock</span>
+					<strong id="stock-count">—</strong>
+					<span class="metric-note">Across all locations</span>
+				</article>
+
+				<article class="metric-card">
+					<span class="metric-label">Low stock</span>
+					<strong id="low-stock-count">—</strong>
+					<span class="metric-note">At or below reorder point</span>
+				</article>
+
+				<article class="metric-card">
+					<span class="metric-label">Locations</span>
+					<strong id="location-count">—</strong>
+					<span class="metric-note">Warehouse storage positions</span>
+				</article>
+			</section>
+			<section class="content-card action-card">
+				<div class="section-heading">
+					<div>
+						<h2>Transfer stock</h2>
+						<p>Move a product between warehouse locations.</p>
+					</div>
+				</div>
+
+				<form id="transfer-form" class="transfer-form">
+					<label>
+						SKU
+						<input name="sku" type="text" placeholder="ADH-001" required>
+					</label>
+
+					<label>
+						From location
+						<input
+							name="source_location_code"
+							type="text"
+							placeholder="A-01-01-01"
+							required
+						>
+					</label>
+
+					<label>
+						To location
+						<input
+							name="destination_location_code"
+							type="text"
+							placeholder="A-01-01-02"
+							required
+						>
+					</label>
+
+					<label>
+						Quantity
+						<input name="quantity" type="number" min="1" step="1" required>
+					</label>
+
+					<button type="submit">Transfer stock</button>
+					<p id="transfer-message" class="form-message" aria-live="polite"></p>
+				</form>
+			</section>
+			<section class="content-card action-card">
+				<div class="section-heading">
+					<div>
+						<h2>Receive stock</h2>
+						<p>Add received units to a warehouse location.</p>
+					</div>
+				</div>
+
+				<form id="receive-form" class="transfer-form">
+					<label>
+						SKU
+						<input name="sku" type="text" placeholder="ADH-001" required>
+					</label>
+
+					<label>
+						Location
+						<input name="location_code" type="text" placeholder="B-01-01-01" required>
+					</label>
+
+					<label>
+						Quantity
+						<input name="quantity" type="number" min="1" step="1" required>
+					</label>
+
+					<button type="submit">Receive stock</button>
+					<p id="receive-message" class="form-message" aria-live="polite"></p>
+				</form>
+			</section>
+			<section class="content-card" id="inventory">
+				<div class="section-heading">
+					<div>
+						<h2>Product inventory</h2>
+						<p>Current stock levels and reorder points.</p>
+					</div>
+					<span class="table-count" id="table-count">Loading…</span>
+				</div>
+
+				<div class="table-wrap">
+					<table>
+						<thead>
+							<tr>
+								<th>SKU</th>
+								<th>Product</th>
+								<th>Category</th>
+								<th>On hand</th>
+								<th>Reorder point</th>
+								<th>Status</th>
+							</tr>
+						</thead>
+						<tbody id="products-table-body">
+							<tr>
+								<td colspan="6" class="empty-state">Loading products…</td>
+							</tr>
+						</tbody>
+					</table>
+				</div>
+			</section>
+
+			<section class="content-card">
+				<div class="section-heading">
+					<div>
+						<h2>Recent inventory movements</h2>
+						<p>Receipts, picks, and transfers recorded by the system.</p>
+					</div>
+					<span class="table-count" id="movement-count">Loading…</span>
+				</div>
+
+				<div class="table-wrap">
+					<table>
+						<thead>
+							<tr>
+								<th>SKU</th>
+								<th>Movement</th>
+								<th>Location / source</th>
+								<th>To</th>
+								<th>Quantity</th>
+								<th>Recorded at</th>
+							</tr>
+						</thead>
+						<tbody id="movements-table-body">
+							<tr>
+								<td colspan="6" class="empty-state">
+									Loading movement history…
+								</td>
+							</tr>
+						</tbody>
+					</table>
+				</div>
+			</section>
+
+			<footer class="footer">
+				<span>LogiFlow WMS</span>
+				<span>Warehouse operations at a glance</span>
+			</footer>
+		</main>
+	</div>
+</body>
+</html>

@@ -7,6 +7,9 @@ from app.packing import build_packing_plan
 from app.palletizing import build_pallet_plan
 from app.trucking import build_truck_plan
 from app.picking import build_pick_plan
+from pathlib import Path
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -15,6 +18,18 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="LogiFlow WMS", lifespan=lifespan)
 
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+app.mount(
+	"/static",
+	StaticFiles(directory=STATIC_DIR),
+	name="static",
+)
+
+
+@app.get("/", include_in_schema=False)
+def home():
+	return FileResponse(STATIC_DIR / "index.html")
 
 @app.get("/health")
 def health_check():

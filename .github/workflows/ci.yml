@@ -52,6 +52,9 @@ jobs:
 
       - name: Build and push image
         run: |
-          docker build -t ghcr.io/lunguandrei/logiflow-wms:${GITHUB_SHA} -t ghcr.io/lunguandrei/logiflow-wms:latest .
-          docker push ghcr.io/lunguandrei/logiflow-wms:${GITHUB_SHA}
-          docker push ghcr.io/lunguandrei/logiflow-wms:latest
+          docker buildx build \
+            --provenance=false \
+            --push \
+            --tag ghcr.io/lunguandrei/logiflow-wms:${GITHUB_SHA} \
+            --tag ghcr.io/lunguandrei/logiflow-wms:latest \
+            .

@@ -37,6 +37,10 @@ jobs:
         run: |
           docker run --rm --entrypoint python logiflow-wms:ci -m pip freeze
           docker run --rm --entrypoint python logiflow-wms:ci -m pip show msgpack setuptools urllib3 || true
+      - name: Locate flagged package files
+        run: |
+          docker run --rm --entrypoint sh logiflow-wms:ci -c \
+            'find / \( -iname "*msgpack*" -o -iname "*setuptools*" \) -print 2>/dev/null || true'
       - name: Scan Docker image with Trivy
         uses: aquasecurity/trivy-action@v0.36.0
         with:

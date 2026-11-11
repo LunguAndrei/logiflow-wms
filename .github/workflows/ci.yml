@@ -33,6 +33,14 @@ jobs:
 
       - name: Build Docker image
         run: docker build -t logiflow-wms:ci .
+      - name: Scan Docker image with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: logiflow-wms:ci
+          format: table
+          exit-code: '0'
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
   publish-image:
     name: Publish image to GHCR
     needs: tests

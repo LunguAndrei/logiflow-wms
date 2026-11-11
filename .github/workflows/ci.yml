@@ -33,6 +33,10 @@ jobs:
 
       - name: Build Docker image
         run: docker build -t logiflow-wms:ci .
+      - name: Inspect packages in Docker image
+        run: |
+          docker run --rm --entrypoint python logiflow-wms:ci -m pip freeze
+          docker run --rm --entrypoint python logiflow-wms:ci -m pip show msgpack setuptools urllib3 || true
       - name: Scan Docker image with Trivy
         uses: aquasecurity/trivy-action@v0.36.0
         with:

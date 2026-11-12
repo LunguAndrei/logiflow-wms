@@ -600,3 +600,31 @@ def test_inventory_receive_returns_409_when_location_has_another_sku(
 	assert response.json()["detail"] == (
 		"Location already contains a different SKU"
 	)
+
+def test_ready_returns_200_when_database_is_available(monkeypatch):
+    monkeypatch.setattr(main, "initialize_database", lambda: None)
+    monkeypatch.setattr(main, "check_database", lambda: None)
+
+    with TestClient(main.app) as client:
+        response = client.get("/ready")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ready",
+        "database": "connected",
+    }
+
+
+def test_ready_returns_503_when_database_is_unavailable(monkeypatch):
+    monkeypatch.setattr(main, "initialize_database", lambda: None)
+
+    def fail_database_check():
+        raise main.sqlite3.OperationalError("database unavailable")
+
+    monkeypatch.setattr(main, "check_database", fail_database_check)
+
+    with TestClient(main.app) as client:
+        response = client.get("/ready")
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Database unavailable"}

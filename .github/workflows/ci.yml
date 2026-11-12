@@ -49,6 +49,16 @@ jobs:
           exit-code: '0'
           vuln-type: 'os,library'
           severity: 'CRITICAL,HIGH'
+      - name: Fail on fixable high or critical vulnerabilities
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: logiflow-wms:ci
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+          skip-setup-trivy: true
   publish-image:
     name: Publish image to GHCR
     needs: tests

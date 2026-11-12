@@ -12,6 +12,13 @@ def connect_database():
     connection.execute("PRAGMA foreign_keys = ON")
     return connection
 
+def check_database():
+    connection = connect_database()
+    try:
+        connection.execute("SELECT 1 FROM products LIMIT 1").fetchone()
+    finally:
+        connection.close()
+
 def record_inventory_movement(
 	connection,
 	sku,

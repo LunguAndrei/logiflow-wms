@@ -2,7 +2,7 @@ import sqlite3
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from contextlib import asynccontextmanager
-from app.database import transfer_inventory, get_inventory_movements, confirm_order_picks, update_order_status, get_order, create_order, confirm_inventory_picks, receive_inventory, pick_inventory, add_location, add_product, get_box_types, get_inventory_balances, get_locations, get_products, initialize_database
+from app.database import check_database, transfer_inventory, get_inventory_movements, confirm_order_picks, update_order_status, get_order, create_order, confirm_inventory_picks, receive_inventory, pick_inventory, add_location, add_product, get_box_types, get_inventory_balances, get_locations, get_products, initialize_database
 from app.packing import build_packing_plan
 from app.palletizing import build_pallet_plan
 from app.trucking import build_truck_plan
@@ -34,6 +34,18 @@ def home():
 @app.get("/health")
 def health_check():
 	return {"status": "ok"}
+
+@app.get("/ready")
+def readiness_check():
+    try:
+        check_database()
+    except sqlite3.Error:
+        raise HTTPException(
+            status_code=503,
+            detail="Database unavailable",
+        )
+
+    return {"status": "ready", "database": "connected"}
 
 class Product(BaseModel):
 	sku: str

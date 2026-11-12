@@ -1,0 +1,3 @@
+# False positive: pip's SBOM reports setuptools, but the image has no standalone setuptools package.
+# Recheck after the next pip or base-image update.
+CVE-2025-47273 exp:2027-05-12

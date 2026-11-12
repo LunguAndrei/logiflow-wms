@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: logiflow-wms
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: logiflow-wms
+  template:
+    metadata:
+      labels:
+        app: logiflow-wms
+    spec:
+      containers:
+        - name: api
+          image: ghcr.io/lunguandrei/logiflow-wms:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: DATABASE_PATH
+              value: /data/logiflow.db
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: logiflow-data

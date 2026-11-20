@@ -1,0 +1,7 @@
+grafana:
+  extraConfigmapMounts:
+    - name: logiflow-alert-rules
+      mountPath: /etc/grafana/provisioning/alerting/logiflow-rules.yaml
+      subPath: alert-rules.yaml
+      configMap: logiflow-alert-rules
+      readOnly: true

@@ -9,3 +9,6 @@ __pycache__/
 **/.terraform/
 *.tfstate
 *.tfstate.*
+
+# Local Grafana SMTP credentials
+k8s/monitoring/grafana-smtp-values.yaml

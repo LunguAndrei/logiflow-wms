@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: api
-          image: ghcr.io/lunguandrei/logiflow-wms:latest
+          image: ghcr.io/lunguandrei/logiflow-wms:6e986a02a5304930032d5fa540d5f9c580da3fc0
           imagePullPolicy: Always
           ports:
             - name: http
